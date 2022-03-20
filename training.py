@@ -31,7 +31,7 @@ def main(hparams) -> None:
 
     tb_logger = TensorBoardLogger(
         save_dir="./experiments",
-        version="version_" + datetime.now().strftime("%d-%m-%Y--%H-%M-%S"),
+        version="version_" + hparams.name_board,
         name="",
     )
     
@@ -43,20 +43,21 @@ def main(hparams) -> None:
 
     # Чекпоинты
     
-    checkpoint_callback = ModelCheckpoint(
-        save_top_k = hparams.save_top_k,
-        verbose = True,
-        monitor = hparams.monitor,
-        mode = hparams.metric_mode,
-        save_weights_only = True
-    )
+    # checkpoint_callback = ModelCheckpoint(
+    #     save_top_k = hparams.save_top_k,
+    #     verbose = True,
+    #     monitor = hparams.monitor,
+    #     mode = hparams.metric_mode,
+    #     save_weights_only = True
+    # )
 
     # Инициализация pl класса трэйнера
     #callbacks= early_stop_callback,
 
     trainer = Trainer(
         logger=[tb_logger, csv_logger],
-        checkpoint_callback=True,
+        log_every_n_steps = 10,
+        default_root_dir="checkpoints",
         gpus=[0, 3],
         log_gpu_memory="all",
         deterministic=True,
@@ -75,7 +76,7 @@ def main(hparams) -> None:
     print('START TESTING')
 #     chk_path = "./experiments/version_01-06-2021--18-09-58/checkpoints/epoch=2-step=315.ckpt"
 #     model_saved = model.load_from_checkpoint(chk_path)
-    trainer.test(model, datamodule = model.data, verbose=True)
+#    trainer.test(model, datamodule = model.data, verbose=True)
 
 
 if __name__ == "__main__":
@@ -152,6 +153,15 @@ if __name__ == "__main__":
             "if it's huge), set how much of the dev set you want to use with this flag."
         ),
     )
+    
+    parser.add_argument(
+        "--name_board",
+        default='tmp',
+        type=str,
+        help=(
+            "The name of tensorboard directory"
+        ),
+    )    
 
     # each LightningModule defines arguments relevant to it
     parser = PET_Model.add_model_specific_args(parser)

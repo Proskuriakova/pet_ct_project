@@ -34,17 +34,23 @@ class PETDataset(Dataset):
             idx = idx.tolist()
             
         img_name = self.dir_path + '/' + self.names[idx] + '.npy'
+        
+        #1 - pet, 0 - ct
             
-        images = torch.from_numpy(np.load(img_name)[:, 1, ...])
+        images0 = torch.from_numpy(np.load(img_name)[:, 0, ...])
+
+        images1 = torch.from_numpy(np.load(img_name)[:, 1, ...])
+
+        images = images0 + images1
         
         trans = transforms.Compose([
                           transforms.Resize(256),
                           transforms.CenterCrop(156),
                           transforms.Lambda(lambda x: x.repeat(3, 1, 1) if x.size(0)==1 else x)])
+        #transforms.CenterCrop(156),
+        images_1 = [trans(images[i].unsqueeze(0)/255.) for i in range(images.shape[0])]
 
-        images1 = [trans(images[i].unsqueeze(0)/255.) for i in range(images.shape[0])]
-
-        images2 = np.stack(images1)
+        images2 = np.stack(images_1)
         
         if round(images2.shape[0]/320, 0)  == 2.:
             images2 = np.array([images2[i, ...] for i in range(0, images2.shape[3], 1)])

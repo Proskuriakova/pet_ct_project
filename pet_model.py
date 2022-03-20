@@ -140,8 +140,7 @@ class PET_Model(pl.LightningModule):
         zis, zls = self.model_pet(xis, xls)
         loss_val = self._loss(zis, zls)
 
-        
-        self.log('train_loss', loss_val, on_epoch=True, logger=True)      
+        self.log('train_loss', loss_val, on_step=True, on_epoch=True, prog_bar=True, logger=True)      
 
         tqdm_dict = {"train_loss": loss_val}
         output = OrderedDict(
@@ -224,7 +223,7 @@ class PET_Model(pl.LightningModule):
         )        
         parser.add_argument(
             "--temperature",
-            default = 0.01,
+            default = 1e-05,
             type = float,
             help = "Temperature for loss calculation",
         )
@@ -268,7 +267,7 @@ class PET_Model(pl.LightningModule):
         )
         parser.add_argument(
             "--freeze_layers",
-            default = None,
+            default = [0, 1, 2, 3, 4, 5],
             type = list,
             help = "",
         )        

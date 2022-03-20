@@ -21,6 +21,7 @@ class ModelPET(nn.Module):
         self.out_dim = out_dim
         self.bucket_size = bucket_size
         self.divided = divided
+        self.l_dim = int(320 / self.bucket_size)
         
         #init BERT
         self.bert_model = self._get_bert_basemodel(bert_base_model,freeze_layers)
@@ -40,7 +41,7 @@ class ModelPET(nn.Module):
         self.res_l1 = nn.Linear(self.num_ftrs, self.num_ftrs)
         self.res_l2 = nn.Linear(self.num_ftrs, self.out_dim)
         #concat images projections per patient
-        self.im_l1_concat = nn.Linear(self.out_dim*10, self.out_dim)
+        self.im_l1_concat = nn.Linear(self.out_dim*self.l_dim, self.out_dim)
         self.im_l2_concat = nn.Linear(self.out_dim, self.out_dim)
         #concat text projections per patient
         self.txt_l1_concat = nn.Linear(self.out_dim*7, self.out_dim)
@@ -148,11 +149,11 @@ class ModelPET(nn.Module):
                     h_j = self.image_encoder(xis_j.unsqueeze(0))
                     slice_imbeds.append(h_j.squeeze())
                     
-                if len(slice_imbeds) <= 10:
-                    for i in range(10 - len(slice_imbeds)):
+                if len(slice_imbeds) <= self.l_dim:
+                    for i in range(self.l_dim - len(slice_imbeds)):
                         slice_imbeds.append(torch.zeros_like(torch.empty(300)).type_as(slice_imbeds[0]))
                 else:
-                    slice_imbeds = slice_imbeds[:10]
+                    slice_imbeds = slice_imbeds[:self.l_dim]
                 x = torch.cat(slice_imbeds, dim = 0)
                     
             else:    
