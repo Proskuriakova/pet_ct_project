@@ -27,8 +27,8 @@ class ModelPET(nn.Module):
         self.bert_model = self._get_bert_basemodel(bert_base_model,freeze_layers)
         self.tokenizer = AutoTokenizer.from_pretrained(bert_base_model)
         # projection MLP for BERT model
-        self.bert_l1 = nn.Linear(768, 768) #1024 is the size of the BERT embbedings (312 for tiny)
-        self.bert_l2 = nn.Linear(768, out_dim) #1024 is the size of the BERT embbedings
+        self.bert_l1 = nn.Linear(1024, 1024) #1024 is the size of the BERT embbedings (312 for tiny)
+        self.bert_l2 = nn.Linear(1024, out_dim) #1024 is the size of the BERT embbedings
 
         # init Resnet
         self.resnet_dict = {"resnet18_3D": models.video.r3d_18(pretrained = False),
@@ -104,7 +104,7 @@ class ModelPET(nn.Module):
         return zis
         
         
-    def text_encoder(self, inputs):
+    def text_encoder(self, inputs, mode):
         """
         Obter os inputs e em seguida extrair os hidden layers e fazer a media de todos os tokens
         Fontes:
@@ -115,25 +115,31 @@ class ModelPET(nn.Module):
         encoded_inputs = self.tokenizer(inputs, 
                                          return_tensors="pt", 
                                          padding=True,
-                                         truncation=True).to(next(self.bert_model.parameters()).device)
+                                         truncation=True, max_length = 512).to(next(self.bert_model.parameters()).device)
         #print('INPUT IDS', encoded_inputs['input_ids'].get_device())
         #print('MODEL ', next(self.bert_model.parameters()).device)
         outputs = self.bert_model(**encoded_inputs)
         
         with torch.no_grad():
             sentence_embeddings = self.mean_pooling(outputs, encoded_inputs['attention_mask'])
+        sentence_embeddings.to(torch.half)    
+        if mode == 'train':
             x = self.bert_l1(sentence_embeddings.to(torch.half))
-            x = F.relu(x)
-            out_emb = self.bert_l2(x)
+        else:
+            x = self.bert_l1(sentence_embeddings)
+        
+        #x = self.bert_l1(sentence_embeddings.to(torch.half))
+        x = F.relu(x)
+        out_emb = self.bert_l2(x)
 
         return out_emb
 
 
-    def text_encode(self, text):
-        if self.divided is not None:
+    def text_encode(self, text, mode):
+        if self.divided:
             slice_embeds = []
             for j in range(len(text)):
-                slice_embeds.append(self.text_encoder(text[j]).squeeze())
+                slice_embeds.append(self.text_encoder(text[j], mode).squeeze())
             x = torch.cat(slice_embeds, dim = 0)
         else:
             x = self.text_encoder(text)
@@ -180,14 +186,17 @@ class ModelPET(nn.Module):
         return x
   
             
-    def forward(self, images_batch, text_batch):
+    def forward(self, images_batch, text_batch, mode):
         
         zis = [self.concat_embed_model(self.image_encode(images_batch[i]), mode = 'img') for i in range(len(images_batch))]
         zis_stack = torch.stack(zis, dim=0).float()
         #image_embed = self.concat_embed_model(zis_stack)
         # print('SHAPE EMBED', image_embed.shape)
-        
-        zls = [self.concat_embed_model(self.text_encode(text_batch[i]), mode = 'txt') for i in range(len(text_batch)) ]
+
+        if self.divided:
+            zls = [self.concat_embed_model(self.text_encode(text_batch[i], mode), mode = 'txt') for i in range(len(text_batch)) ]
+        else:
+            zls = [self.text_encode(text_batch[i], mode).squeeze() for i in range(len(text_batch)) ]
         zls_stack = torch.stack(zls, dim=0).float()
         #text_embed = self.concat_embed_model(zls_stack)
         

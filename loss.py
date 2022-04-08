@@ -21,10 +21,11 @@ class NTXentLoss(torch.nn.Module):
         return loss
 
     def forward(self, zis, zjs,
-                    norm=True,
+                    norm=False,
                     weights=1.0):
         temperature = self.temperature
         alpha = self.alpha_weight
+        #print(zis.shape, zjs.shape)
 
         """
         Pytorch implementation of the loss  SimCRL function by googleresearch: https://github.com/google-research/simclr

@@ -13,7 +13,8 @@ class PETDataset(Dataset):
 
     def __init__(self, 
                 dir_path, names, 
-                divided = False, 
+                divided = False,
+                augmentations = False
                 ):
         """
         Args:
@@ -21,7 +22,7 @@ class PETDataset(Dataset):
         """
         self.dir_path = dir_path
         self.divided = divided
-
+        self.augmentations = augmentations
         self.names = names
         
 
@@ -43,12 +44,24 @@ class PETDataset(Dataset):
 
         images = images0 + images1
         
-        trans = transforms.Compose([
+        standard_transorms = transforms.Compose([
                           transforms.Resize(256),
-                          transforms.CenterCrop(156),
+                          transforms.CenterCrop(162),
                           transforms.Lambda(lambda x: x.repeat(3, 1, 1) if x.size(0)==1 else x)])
-        #transforms.CenterCrop(156),
-        images_1 = [trans(images[i].unsqueeze(0)/255.) for i in range(images.shape[0])]
+        
+        color_jitter = transforms.ColorJitter(brightness=.5, hue=.05)
+        posterizer = transforms.RandomPosterize(bits=5)
+        augment_transforms = transforms.Compose([
+                                              transforms.RandomApply([color_jitter, posterizer], p=0.8),
+                                              transforms.RandomHorizontalFlip(),
+                                              transforms.RandomVerticalFlip(),
+                                              transforms.RandomGrayscale(p=1.),
+                                              ])
+        
+        if self.augmentations:
+            images_1 = [augment_transforms(standard_transorms(images[i].unsqueeze(0)))/255. for i in range(images.shape[0])]
+        else:
+            images_1 = [standard_transorms(images[i].unsqueeze(0)/255.) for i in range(images.shape[0])]
 
         images2 = np.stack(images_1)
         
@@ -59,7 +72,7 @@ class PETDataset(Dataset):
         text_path = self.dir_path + '/' + self.names[idx] + '.txt.txt'
         with open(text_path) as f:
             text = f.read().rstrip().replace('\n', ' ')
-        text = re.sub(r'[^\w\s]', ' ', text).replace('  ', ' ')
+            text = re.sub( r'[\(\)]', '', text).replace('  ', ' ')
         
         titles = ['Пол:', '{}.*?{}'.format('Область головы', 'шеи:'),
         'Органы грудной клетки:', 'Органы брюшной полости:', 'Органы малого таза:',
@@ -76,9 +89,9 @@ class PETDataset(Dataset):
                 sent = pat.findall(text)
                 divided_text.append(''.join(sent).strip())
 
-            sample = {'image': images3, 'text': divided_text}
+            sample = {'image': images3, 'text': divided_text, 'name': self.names[idx]}
         else:
-            sample = {'image': images3, 'text': text}
+            sample = {'image': images3, 'text': text, 'name': self.names[idx]}
 
         return sample
 

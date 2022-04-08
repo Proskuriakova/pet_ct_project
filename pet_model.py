@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from loss import NTXentLoss
 
 from dataset import PETDataset
-from utils import collate_fn
+from utils import collate_fn, Emb_Save
 from os import listdir
 from collections import OrderedDict
 
@@ -45,6 +45,7 @@ class PET_Model(pl.LightningModule):
                     self.names.append(dir_content.split('.')[0])
 
             num_train = len(self.names)
+            print("LEN", num_train)
             indices = list(range(num_train))
             np.random.shuffle(indices)
 
@@ -53,14 +54,12 @@ class PET_Model(pl.LightningModule):
             
             self.train_names = [self.names[i] for i in train_idx]
             self.valid_names = [self.names[i] for i in valid_idx]
-            #print(len(self.train_names))
-            #print(len(self.valid_names))
-            #print(self.names[:2])
 
         def train_dataloader(self) -> DataLoader:
             
             self.train_dataset = PETDataset(dir_path = self.hparams.path_to_data, names = self.names,
-                                            divided = self.hparams.divided_text)
+                                            divided = self.hparams.divided_text, 
+                                            augmentations = self.hparams.augmentations)
  
             return DataLoader(
                 dataset = self.train_dataset,
@@ -69,24 +68,16 @@ class PET_Model(pl.LightningModule):
                 collate_fn = collate_fn
             )
 
-#         def val_dataloader(self) -> DataLoader:
-        
-#             self.val_dataset = PETDataset(dir_path = self.hparams.path_to_data, names = self.valid_names,
-#                                             divided = self.hparams.divided_text)
-             
-#             return DataLoader(
-#                 dataset = self.val_dataset, sampler = DistributedSampler(self.val_dataset),
-#                 batch_size=self.hparams.batch_size, num_workers = self.hparams.loader_workers,
-#                 collate_fn = collate_fn
-#             )
 
-        def test_dataloader(self) -> DataLoader:
+
+        def predict_dataloader(self) -> DataLoader:
             
             self.test_dataset = PETDataset(dir_path = self.hparams.path_to_data, names = self.names,
-                                            divided = self.hparams.divided_text)
+                                            divided = self.hparams.divided_text,
+                                              augmentations = self.hparams.augmentations)
              
             return DataLoader(
-                dataset=self.test_dataset, sampler = DistributedSampler(self.test_dataset),
+                dataset=self.test_dataset, sampler = RandomSampler(self.test_dataset),
                 batch_size = self.hparams.batch_size, num_workers = self.hparams.loader_workers,
                 collate_fn = collate_fn
             )
@@ -97,6 +88,11 @@ class PET_Model(pl.LightningModule):
         self.save_hyperparameters(hparams)
         print(self.hparams)
  
+        self.test_texts_embeds = []
+        self.test_images_embeds = []
+        
+        self.train_texts_embeds = []
+        #self.save_emdeds = Emb_Save()
         
         self.batch_size = self.hparams.batch_size
         self.out_dim = self.hparams.out_dim
@@ -128,7 +124,21 @@ class PET_Model(pl.LightningModule):
 
         return self._loss(text_embed, image_embed)
 
- 
+    def predict_step(self, batch: tuple, batch_nb: int) -> list:
+        xls = batch['texts']
+        xis = batch['images']
+        name = batch['names']
+
+        zis, zls = self.model_pet(xis, xls)
+        
+        return [zls.cpu().numpy(), zis.cpu().numpy(), name]
+        # self.test_texts_embeds.extend(zls.cpu().numpy())
+        # self.test_images_embeds.extend(zis.cpu().numpy())
+        # self.predict_names.extend(name)
+        
+        
+        
+    
     def training_step(self, batch: tuple, batch_nb: int, *args, **kwargs) -> dict:
         #шаг обучения, на входе батч и номер батча
         #возвращает loss и инфу для логгера pl
@@ -136,11 +146,12 @@ class PET_Model(pl.LightningModule):
         xls = batch['texts']
         xis = batch['images'] 
         
-
-        zis, zls = self.model_pet(xis, xls)
+        zis, zls = self.model_pet(xis, xls, mode = 'train')
+        #print(zls)
+        self.train_texts_embeds.append(zls.detach().cpu().numpy())
         loss_val = self._loss(zis, zls)
 
-        self.log('train_loss', loss_val, on_step=True, on_epoch=True, prog_bar=True, logger=True)      
+        self.log('train_loss', loss_val, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist = True)      
 
         tqdm_dict = {"train_loss": loss_val}
         output = OrderedDict(
@@ -148,54 +159,49 @@ class PET_Model(pl.LightningModule):
         )
         return output
 
-#     def validation_step(self, batch: list, batch_nb: int, *args, **kwargs) -> dict:
-
-#         xls = batch['texts']
-#         xis = batch['images']        
-
-#         zis, zls = self.model_pet(xis, xls)
-#         loss_val = self._loss(zis, zls)
-
-        
-#         self.log('val_loss', loss_val, on_epoch=True, logger=True)      
- 
-
-        
-#         tqdm_dict = {"val_loss": loss_val}
-        
-#         output = OrderedDict({"val_loss": loss_val, 
-#                              "progress_bar": tqdm_dict, "log": tqdm_dict})
-
-#         return output
-
     
     def test_step(self, batch: list, batch_nb: int, *args, **kwargs) -> dict:
         with torch.no_grad():
             self.model_pet.eval()
           
             xls = batch['texts']
-            xis = batch['images']        
+            xis = batch['images']  
+            names = batch['names']
 
-            zis, zls = self.model_pet(xis, xls)
-            loss_val = self._loss(zis, zls)
-
+            zis, zls = self.model_pet(xis, xls, mode = 'train')
+            test_loss = self._loss(zis, zls)
         
-        self.log('val_loss', loss_val, on_epoch=True, logger=True)      
+            #self.save_emdeds.update(zls, zis, names)
+        
+        self.log('test_loss', test_loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, sync_dist = True)     
  
 
         
-        tqdm_dict = {"val_loss": loss_val}
+        tqdm_dict = {"test_loss": test_loss}
         
-        output = OrderedDict({"val_loss": loss_val, 
+        output = OrderedDict({"test_loss": test_loss, 
                              "progress_bar": tqdm_dict, "log": tqdm_dict})
 
         return output
+    
+#     def test_epoch_end(self):
         
-         
+#         self.save_emdeds.compute(self.hparams.out_name)
+        
+#         print('ALL', len(self.test_texts_embeds))
+#         print('zero element', len(self.test_texts_embeds[0]))
+#         texts_embeds = np.array(self.test_texts_embeds)
+#         with open('texts_embeddings_bs3.npy', 'wb') as f:
+#             np.save(f, texts_embeds)
+#         images_embeds = np.array(self.test_images_embeds)
+#         with open('images_embeddings_bs3.npy', 'wb') as f:
+#             np.save(f, images_embeds)
+                 
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.model_pet.parameters(), lr = self.hparams['learning_rate'])
         return [optimizer], []
+        #default = "DeepPavlov/rubert-base-cased-sentence",
 
      
     @classmethod
@@ -211,7 +217,7 @@ class PET_Model(pl.LightningModule):
         )
         parser.add_argument(
             "--text_encoder_model",
-            default = "DeepPavlov/rubert-base-cased-sentence",
+            default = 'sberbank-ai/ruRoberta-large',
             type = str,
             help = "Text encoder",
         )
@@ -223,7 +229,7 @@ class PET_Model(pl.LightningModule):
         )        
         parser.add_argument(
             "--temperature",
-            default = 1e-05,
+            default = 1e-03,
             type = float,
             help = "Temperature for loss calculation",
         )
@@ -247,7 +253,7 @@ class PET_Model(pl.LightningModule):
         )
         parser.add_argument(
             "--alpha_weight",
-            default = 0.75,
+            default = 0.5,
             type = int,
             help = "Loss parameter, default = 0.75",
         )
@@ -267,7 +273,7 @@ class PET_Model(pl.LightningModule):
         )
         parser.add_argument(
             "--freeze_layers",
-            default = [0, 1, 2, 3, 4, 5],
+            default = [0, 1, 2, 3],
             type = list,
             help = "",
         )        
@@ -284,6 +290,16 @@ class PET_Model(pl.LightningModule):
             help = "Divide text into logical parts or not, bool, default - True",
         )        
 
-
-
+        parser.add_argument(
+            "--out_name",
+            default = 'tmp',
+            type = str,
+            help = "Name for output files",
+        )      
+        parser.add_argument(
+            "--augmentations",
+            default = False,
+            type = bool,
+            help = "Name for output files",
+        )     
         return parser
